@@ -16,7 +16,7 @@ st.set_page_config(
 )
 
 # ===============================
-# PATH AMAN UNTUK STREAMLIT CLOUD
+# PATH AMAN (STREAMLIT CLOUD)
 # ===============================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -26,15 +26,57 @@ MODEL_RF_PATH = os.path.join(BASE_DIR, "model", "model_rf.pkl")
 SCALER_PATH = os.path.join(BASE_DIR, "model", "scaler.pkl")
 
 # ===============================
-# LOAD DATA
+# LOAD DATA (ANTI ERROR KOLUMN)
 # ===============================
 @st.cache_data
 def load_data():
     df = pd.read_csv(DATA_PATH)
 
-    # Sesuai dataset kamu (dd-mm-yyyy)
-    df["date"] = pd.to_datetime(df["date"], dayfirst=True)
+    # rapikan nama kolom
+    df.columns = [c.strip() for c in df.columns]
+
+    # cari kolom tanggal otomatis
+    date_col = None
+    for c in df.columns:
+        if "date" in c.lower():
+            date_col = c
+            break
+
+    if date_col is None:
+        st.error(f"Kolom tanggal tidak ditemukan. Kolom tersedia: {df.columns.tolist()}")
+        st.stop()
+
+    # mapping kolom
+    rename_map = {date_col: "date"}
+
+    for c in df.columns:
+        if c.lower() == "state":
+            rename_map[c] = "state"
+
+        if "product" in c.lower():
+            rename_map[c] = "product_name"
+
+        cl = c.lower()
+        if ("unit" in cl or "quantity" in cl) and ("price" not in cl):
+            rename_map[c] = "quantity_sold"
+
+    df = df.rename(columns=rename_map)
+
+    # konversi tanggal
+    df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors="coerce")
+    df = df.dropna(subset=["date"])
+
+    # tahun
     df["year"] = df["date"].dt.year
+
+    # validasi kolom wajib
+    required = ["date", "state", "product_name", "quantity_sold"]
+    missing = [c for c in required if c not in df.columns]
+
+    if missing:
+        st.error(f"Kolom wajib tidak lengkap: {missing}")
+        st.write("Kolom tersedia:", df.columns.tolist())
+        st.stop()
 
     return df
 
@@ -52,7 +94,6 @@ def load_models():
 
     return lstm_model, rf_model, scaler
 
-
 # ===============================
 # HEADER
 # ===============================
@@ -60,7 +101,7 @@ st.markdown(
     """
     <h1 style='text-align:center;'>👟 Prediksi Penjualan Produk Nike</h1>
     <p style='text-align:center;'>
-    Menggunakan <b>Random Forest</b> dan <b>Long Short-Term Memory (LSTM)</b>
+    Menggunakan <b>Random Forest</b> dan <b>LSTM</b>
     </p>
     <hr>
     """,
@@ -80,12 +121,12 @@ st.sidebar.header("🔎 Filter Data")
 
 state = st.sidebar.selectbox(
     "State / Wilayah",
-    sorted(df["state"].dropna().unique())
+    sorted(df["state"].unique())
 )
 
 product = st.sidebar.selectbox(
     "Produk",
-    sorted(df["product_name"].dropna().unique())
+    sorted(df["product_name"].unique())
 )
 
 year = st.sidebar.selectbox(
@@ -103,7 +144,7 @@ filtered_df = df[
 ].sort_values("date")
 
 # ===============================
-# TAMPILKAN DATA
+# DATA TERFILTER
 # ===============================
 st.subheader("📄 Data Penjualan Terfilter")
 
@@ -113,7 +154,7 @@ st.dataframe(
 )
 
 # ===============================
-# GRAFIK TREND PENJUALAN
+# GRAFIK TREN PENJUALAN
 # ===============================
 st.subheader("📈 Grafik Tren Penjualan")
 
@@ -130,7 +171,7 @@ if len(filtered_df) > 0:
 
     st.pyplot(fig)
 else:
-    st.warning("Data tidak tersedia untuk filter yang dipilih.")
+    st.warning("Data kosong untuk filter ini.")
 
 # ===============================
 # PREDIKSI
@@ -138,8 +179,8 @@ else:
 st.subheader("🔮 Prediksi Penjualan")
 
 if len(filtered_df) >= 10:
-
     time_steps = 10
+
     series = filtered_df["quantity_sold"].values.reshape(-1, 1)
     series_scaled = scaler.transform(series)
 
@@ -152,8 +193,8 @@ if len(filtered_df) >= 10:
     lstm_pred_scaled = lstm_model.predict(X_lstm)
     lstm_pred = scaler.inverse_transform(lstm_pred_scaled)
 
-    rf_features = np.arange(len(series)).reshape(-1, 1)
-    rf_pred = rf_model.predict(rf_features)
+    rf_x = np.arange(len(series)).reshape(-1, 1)
+    rf_pred = rf_model.predict(rf_x)
 
     # ===============================
     # GRAFIK PREDIKSI
@@ -181,25 +222,24 @@ if len(filtered_df) >= 10:
         linestyle=":"
     )
 
-    ax2.set_title("Perbandingan Prediksi Penjualan")
     ax2.set_xlabel("Tanggal")
     ax2.set_ylabel("Jumlah Terjual")
+    ax2.set_title("Perbandingan Prediksi Penjualan")
     ax2.legend()
 
     st.pyplot(fig2)
 
     # ===============================
-    # PENJELASAN HASIL
+    # PENJELASAN
     # ===============================
     st.markdown(
         """
         ### 📝 Penjelasan Hasil Prediksi
-        - **Garis Data Aktual** menunjukkan penjualan asli dari dataset.
-        - **Prediksi LSTM** menangkap pola tren dan ketergantungan waktu (time-series).
-        - **Prediksi Random Forest** melihat pola umum berdasarkan urutan data.
+        - **Data Aktual** menunjukkan penjualan asli.
+        - **LSTM** mempelajari pola tren berdasarkan waktu.
+        - **Random Forest** memprediksi berdasarkan pola umum data.
 
-        📌 Jika garis prediksi mengikuti pola data aktual,
-        maka model berhasil mempelajari tren penjualan produk Nike.
+        📌 Model dianggap baik jika garis prediksi mengikuti arah tren data aktual.
         """
     )
 
